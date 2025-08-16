@@ -19,7 +19,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shield, Heart, Phone, Eye, Ear, Warning, Settings, Users, MessageSquare, Plus, X, Mic, MicOff, Volume2, VolumeX } from '@phosphor-icons/react'
-import { toast } from 'sonner'
+import { toast, Toaster } from 'sonner'
+
+// Speech API type declarations for better browser compatibility
+declare global {
+  interface Window {
+    SpeechRecognition: any
+    webkitSpeechRecognition: any
+  }
+}
 
 interface EmergencyContact {
   id: string
@@ -80,33 +88,45 @@ function App() {
 
   // Initialize Web Speech API
   useEffect(() => {
-    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      recognitionRef.current = new SpeechRecognition()
-      recognitionRef.current.continuous = true
-      recognitionRef.current.interimResults = true
-      recognitionRef.current.lang = 'en-US'
-      
-      recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-        let finalTranscript = ''
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript
+    // Check for Speech Recognition support
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
+      try {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        const recognition = new SpeechRecognition()
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = 'en-US'
+        
+        recognition.onresult = (event: SpeechRecognitionEvent) => {
+          let finalTranscript = ''
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript
+            }
+          }
+          if (finalTranscript) {
+            setTranscription(prev => prev + ' ' + finalTranscript)
           }
         }
-        if (finalTranscript) {
-          setTranscription(prev => prev + ' ' + finalTranscript)
+        
+        recognition.onerror = () => {
+          setIsRecording(false)
+          toast.error('Speech recognition error')
         }
-      }
-      
-      recognitionRef.current.onerror = () => {
-        setIsRecording(false)
-        toast.error('Speech recognition error')
+        
+        recognitionRef.current = recognition
+      } catch (error) {
+        console.warn('Speech Recognition initialization failed:', error)
       }
     }
 
-    if ('speechSynthesis' in window) {
-      synthesisRef.current = window.speechSynthesis
+    // Check for Speech Synthesis support
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        synthesisRef.current = window.speechSynthesis
+      } catch (error) {
+        console.warn('Speech Synthesis initialization failed:', error)
+      }
     }
   }, [])
 
@@ -209,19 +229,25 @@ function App() {
   // Speech-to-Text functionality
   const toggleSpeechRecognition = () => {
     if (!recognitionRef.current) {
-      toast.error('Speech recognition not supported')
+      toast.error('Speech recognition not supported in this browser')
       return
     }
 
-    if (isRecording) {
-      recognitionRef.current.stop()
+    try {
+      if (isRecording) {
+        recognitionRef.current.stop()
+        setIsRecording(false)
+        toast.info('Speech recognition stopped')
+      } else {
+        setTranscription('')
+        recognitionRef.current.start()
+        setIsRecording(true)
+        toast.success('Speech recognition started')
+      }
+    } catch (error) {
       setIsRecording(false)
-      toast.info('Speech recognition stopped')
-    } else {
-      setTranscription('')
-      recognitionRef.current.start()
-      setIsRecording(true)
-      toast.success('Speech recognition started')
+      toast.error('Failed to start speech recognition')
+      console.warn('Speech recognition error:', error)
     }
   }
 
@@ -232,26 +258,32 @@ function App() {
       return
     }
 
-    if (isSpeaking) {
-      synthesisRef.current.cancel()
-      setIsSpeaking(false)
-      return
-    }
+    try {
+      if (isSpeaking) {
+        synthesisRef.current.cancel()
+        setIsSpeaking(false)
+        return
+      }
 
-    const utterance = new SpeechSynthesisUtterance(textToSpeak)
-    utterance.rate = 0.8
-    utterance.pitch = 1
-    utterance.volume = 1
-    
-    utterance.onstart = () => setIsSpeaking(true)
-    utterance.onend = () => setIsSpeaking(false)
-    utterance.onerror = () => {
-      setIsSpeaking(false)
-      toast.error('Speech synthesis error')
-    }
+      const utterance = new SpeechSynthesisUtterance(textToSpeak)
+      utterance.rate = 0.8
+      utterance.pitch = 1
+      utterance.volume = 1
+      
+      utterance.onstart = () => setIsSpeaking(true)
+      utterance.onend = () => setIsSpeaking(false)
+      utterance.onerror = () => {
+        setIsSpeaking(false)
+        toast.error('Speech synthesis error')
+      }
 
-    synthesisRef.current.speak(utterance)
-    toast.success('Speaking text...')
+      synthesisRef.current.speak(utterance)
+      toast.success('Speaking text...')
+    } catch (error) {
+      setIsSpeaking(false)
+      toast.error('Failed to speak text')
+      console.warn('Speech synthesis error:', error)
+    }
   }
 
   // Emergency contacts management
@@ -279,11 +311,16 @@ function App() {
   }
 
   const removeEmergencyContact = (contactId: string) => {
-    setUserProfile(prev => ({
-      ...prev,
-      emergencyContacts: prev.emergencyContacts.filter(c => c.id !== contactId)
-    }))
-    toast.success('Emergency contact removed')
+    try {
+      setUserProfile(prev => ({
+        ...prev,
+        emergencyContacts: prev.emergencyContacts.filter(c => c.id !== contactId)
+      }))
+      toast.success('Emergency contact removed')
+    } catch (error) {
+      toast.error('Failed to remove contact')
+      console.warn('Error removing contact:', error)
+    }
   }
 
   return (
@@ -779,6 +816,14 @@ function App() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Toast Notifications */}
+      <Toaster 
+        position="top-center"
+        expand={true}
+        richColors
+        closeButton
+      />
     </div>
   )
 }
