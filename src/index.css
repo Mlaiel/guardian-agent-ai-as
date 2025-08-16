@@ -100,7 +100,7 @@
 
 @layer base {
   body {
-    @apply bg-background text-foreground font-body;
+    @apply bg-background text-foreground;
     font-family: var(--font-family-body);
   }
   
